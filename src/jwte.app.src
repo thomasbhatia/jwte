@@ -1,0 +1,11 @@
+{application, jwte,
+ [{description, "Light and compact yet full featured JSON Web TOken (JWT) library for Erlang"},
+  {vsn, "0.10.0"},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, []},
+  {modules, [jwte]},
+  {maintainers, ["Thomas Bhatia"]},
+  {licenses, ["BSD"]},
+  {links, [{"Github", "https://github.com/thomasbhatia/jwte"}]}
+ ]}.
