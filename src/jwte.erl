@@ -1,6 +1,6 @@
-%% Supports HMAC, RSA, EC. TODO: Pass atom instead of Binary Algorithm. Add lager support.
-%% Pass records or map instead of this crap
+%% Supports HMAC, RSA, EC. TODO: Pass atom instead of Binary Algorithm.
 %% use verify_strict?
+%% Typespec
 
 -module(jwte).
 
@@ -8,25 +8,34 @@
 -include_lib("public_key/include/public_key.hrl").
 
 %% API exports
--export([peek/1, sign/2, sign/3, verify/2, verify/3]).
+-export([peek/1, sign/1, sign/2, sign/3, verify/1, verify/2, verify/3]).
+
+-type key() :: binary() | list().
+-type alg() :: binary() | list().
+-export_type([key/0, alg/0]).
 
 %%====================================================================
 %% API functions
 %%====================================================================
-peek(JWT) ->
-    verify(JWT, undefined).
 
+%%====================================================================
+%% @doc Peek claims. Return claims without verifying signature.
+%%====================================================================
+peek(JWT) ->
+    {ok, Unpacked} = unpacker(JWT),
+    Payload = maps:get(payload, Unpacked),
+    {ok, Payload}.
+
+%%====================================================================
+%% @doc Sign claims. If no algorithm is specified we use HS256.
+%%====================================================================
 sign(Claims, Key) ->
-    sign(#{claims => Claims, key => Key}).
+    sign(#{claims => Claims, key => Key, alg => <<"HS256">>}).
 
 sign(Claims, Key, Alg) ->
     sign(#{claims => Claims, key => Key, alg => Alg}).
 
-sign(#{claims := _Claims, key := _Key} = Payload0) when (map_size(Payload0) =:= 2) ->
-    Payload = Payload0#{alg => <<"HS256">>},
-    sign(Payload);
-
-sign(#{claims := Claims, key := Key, alg := Alg}) ->
+sign(#{claims := Claims, key := Key, alg := Alg}) when is_binary(Alg) ->
     Header = [{<<"alg">>, Alg}, {<<"typ">>, <<"JWT">>}],
     Hjson = jsx:encode(Header),
     Pjson = jsx:encode(Claims),
@@ -36,43 +45,46 @@ sign(#{claims := Claims, key := Key, alg := Alg}) ->
     SigType = get_signature_type(Alg),
     Signer = signer(SigType, Key, UnsignedToken),
     Signed = base64url:encode(Signer),
-    <<UnsignedToken/binary, ".", Signed/binary>>.
+    <<UnsignedToken/binary, ".", Signed/binary>>;
+sign(#{claims := Claims, key := Key, alg := Alg}) ->
+    sign(#{claims => Claims, key => Key, alg => <<"HS256">>}).
 
-
-%%% Verify %%%
+%%====================================================================
+%% @doc Verify claims
+%%====================================================================
 verify(JWT, Key) ->
     verify(JWT, Key, <<"HS256">>).
 
 verify(JWT, Key, Algorithm) ->
-    [Header_segment, Data] = binary:split(JWT, <<".">>),
-    [Payload_segment, Crypto_segment] = binary:split(Data, <<".">>),
-    Payload = jsx:decode(base64url:decode(Payload_segment)),
-    Header = jsx:decode(base64url:decode(Header_segment)),
-    Signature = base64url:decode(Crypto_segment),
-    Signing_input = <<Header_segment/binary, ".", Payload_segment/binary>>,
-    verify(Algorithm, Key, Signing_input, Header, Signature, Payload).
+    {ok, Unpacked} = unpacker(JWT),
+    Type = get_signature_type(Algorithm),
+    Unpacked0 = Unpacked#{key => Key, sig => Type},
+    Unpacked1 = Unpacked0#{verified => verifier(Unpacked0)},
+    verify(Unpacked1).
 
-verify(_Algorithm, _Key = undefined, _Signing_input, _Header, _Signature, Payload) ->
-    Payload;
-verify(Algorithm, Key, Signing_input, Header, Signature, Payload) ->
-    HeaderAlg = proplists:get_value(<<"alg">>, Header),
-    Verified = verifier(get_signature_type(Algorithm), Key, Signing_input, Signature),
-    verify([Verified, HeaderAlg == Algorithm, Payload]).
-
-verify([true = _Verified, true = _AlgoMatch, Payload]) ->
-    Payload;
-verify([false, _, _Payload]) ->
+verify(#{alg := Alg, verified := true, sig := {_Type, Sig_Alg}, payload := Payload}) when Alg == Sig_Alg ->
+    {ok, Payload};
+verify(#{verified := false}) ->
     {error, "Bad key or secret"};
-verify([_Verified, false, _Payload]) ->
+verify(#{alg := false}) ->
     {error, "Algorithm mismatch"}.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
+unpacker(JWT) ->
+    [Header_segment, Data] = binary:split(JWT, <<".">>),
+    [Payload_segment, Crypto_segment] = binary:split(Data, <<".">>),
+    [{<<"alg">>,Alg},{<<"typ">>,<<"JWT">>}] = jsx:decode(base64url:decode(Header_segment)),
+    Payload = jsx:decode(base64url:decode(Payload_segment)),
+    Signature = base64url:decode(Crypto_segment),
+    Signing_input = <<Header_segment/binary, ".", Payload_segment/binary>>,
+    Unpacked = #{alg => Alg, payload => Payload, signature => Signature, signing_input => Signing_input},
+    {ok, Unpacked}.
+
 signer({hmac, Algorithm}, Secret, UnsignedToken) ->
     Digest = get_hash_algorithm(Algorithm),
     crypto:hmac(Digest, Secret, UnsignedToken);
-
 signer({rsa, Algorithm}, PrivateKeyPem, UnsignedToken) when is_binary(PrivateKeyPem) ->
     [RSAEntry] = public_key:pem_decode(PrivateKeyPem),
     Key = public_key:pem_entry_decode(RSAEntry),
@@ -83,36 +95,31 @@ signer({rsa, Algorithm}, PrivateKeyPem, UnsignedToken) when is_binary(PrivateKey
 signer({rsa, Algorithm}, [E, N, D], UnsignedToken) ->
     Digest = get_hash_algorithm(Algorithm),
     crypto:sign(rsa, Digest, UnsignedToken, [E,N,D]);
-
-%% EC
 signer({ec, _Algorithm}, ECPrivateKeyPem, UnsignedToken) when is_binary(ECPrivateKeyPem) ->
     [{'EcpkParameters', _, not_encrypted} = _Entry1,
       {'ECPrivateKey', _, not_encrypted} = Entry2] = public_key:pem_decode(ECPrivateKeyPem),
     ECPrivateKey = public_key:pem_entry_decode(Entry2),
-    Signature = public_key:sign(UnsignedToken, sha512, ECPrivateKey),
-    Signature.
-%% HMAC
-verifier({hmac, Algorithm}, Secret, Signing_input, Signature) ->
+    public_key:sign(UnsignedToken, sha512, ECPrivateKey).
+    
+verifier(#{sig := {hmac, Algorithm}, key := Key, signing_input := Signing_input, signature := Signature}) ->
     Digest = get_hash_algorithm(Algorithm),
-    crypto:hmac(Digest, Secret, Signing_input) == Signature;
-%% RSA
-verifier({rsa, Algorithm}, PublicKeyPem, Signing_input, Signature) when is_binary(PublicKeyPem) ->
+    crypto:hmac(Digest, Key, Signing_input) == Signature;
+verifier(#{sig := {rsa, _Algorithm}, key := PublicKeyPem} = P) when is_binary(PublicKeyPem) ->
     [RSAEntry] = public_key:pem_decode(PublicKeyPem),
     Key = public_key:pem_entry_decode(RSAEntry),
     E = Key#'RSAPublicKey'.publicExponent,
     N = Key#'RSAPublicKey'.modulus,
-    verifier({rsa, Algorithm}, [E, N], Signing_input, Signature);
-verifier({rsa, Algorithm}, [E, N], Signing_input, Signature) ->
+    NP = P#{key := [E,N]},
+    verifier(NP);
+%%% @doc Key is decoded PEM.
+verifier(#{sig := {rsa, Algorithm}, key := [E, N], signing_input := Signing_input, signature := Signature}) ->
     Digest = get_hash_algorithm(Algorithm),
     crypto:verify(rsa, Digest, Signing_input, Signature, [E, N]);
-%% EC
-verifier({ec, Algorithm}, ECPublicKeyPem, Signing_input, Signature) when is_binary(ECPublicKeyPem) ->
-    io:format("Algorithm ~p",[Algorithm]),
+verifier(#{sig := {ec, Algorithm}, key := ECPublicKeyPem, signing_input := Signing_input, signature := Signature}) when is_binary(ECPublicKeyPem) ->
     [{'SubjectPublicKeyInfo', _, _} = PubEntry0] = public_key:pem_decode(ECPublicKeyPem),
     ECPublicKey = public_key:pem_entry_decode(PubEntry0),
     Digest = get_hash_algorithm(Algorithm),
     public_key:verify(Signing_input, Digest, Signature, ECPublicKey).
-
 
 get_hash_algorithm(Bin) ->
     {_Title,_AlgorithmBin,HashAlgorithm,_SignatureType} = lists:keyfind(Bin, 2, ?ALGO),
@@ -124,5 +131,10 @@ get_signature_type({_Title,AlgorithmBin,_HashAlgorithm,SignatureType}, _Bin) ->
     {SignatureType, AlgorithmBin};
 get_signature_type(false, Bin) ->
     erlang:error({badarg, Bin}).
+
+%% iss; sub; aud; exp; nbf; iat; jti;
+claims_check() ->
+    ok.
+
 
 
