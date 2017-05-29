@@ -3,8 +3,16 @@
   {vsn, "0.10.0"},
   {registered, []},
   {applications, [kernel, stdlib]},
-  {env, []},
-  {modules, [jwte]},
+  {env, [
+         {issuer, "MyAPP"},
+         {ttl, 9600},
+         {allowed_drift, 1000},
+         {verify_issuer, true},
+         {ec_keys, [
+            %{pub, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_prikey.pem"])},
+            %{pri, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_pubkey.pem"])}
+         ]}
+    ]},
   {maintainers, ["Thomas Bhatia"]},
   {licenses, ["BSD"]},
   {links, [{"Github", "https://github.com/thomasbhatia/jwte"}]}

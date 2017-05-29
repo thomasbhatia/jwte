@@ -10,6 +10,7 @@
 % -define(RS384, <<"RS384">>).
 % -define(RS512, <<"RS512">>).
 
+-define(EXP_CLAIMSET, epoch() + application:get_env(jwte, allowed_drift)).
 
 -define(ALGO, 
         [{hs256, <<"HS256">>, sha256, hmac}, 

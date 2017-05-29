@@ -15,7 +15,10 @@ jwte_test_() ->
          {"Sign HMAC with invalid key or algorithm", fun invalid_sign_hmac/0},
          {"Sign RSA", fun sign_rsa/0},
          {"Sign RSA with invalid key or algorithm", fun invalid_sign_rsa/0},
-         {"Sign and Verify EC", fun sign_verify_ec/0}].
+         {"Sign and Verify EC", fun sign_verify_ec/0},
+         {"Verify EXP claim", fun verify_claim_exp/0},
+         {"verify SUB claim", fun verify_sub_claimset/0}
+        ].
 
 rsa_pri_pem() ->
     {ok, RSAPriPem} = file:read_file("test/data/rsakey_2048.pem"),
@@ -103,6 +106,50 @@ invalid_sign_rsa() ->
 sign_verify_ec() ->
     Signed = sign_ec(ec512),
     ?assertEqual({ok, claims()}, verify_ec({Signed, <<"EC512">>})).
+
+
+%iss: The issuer of the token
+
+%exp: This will define the expiration in NumericDate value. The expiration MUST be after the current date/time.
+verify_claim_exp() ->
+    ?assertEqual({ok, valid_exp()}, jwte:check_claims(valid_exp(), claimset_exp())),
+    ?assertEqual({error, {expired_exp(), claimset_exp()}}, jwte:check_claims(expired_exp(), claimset_exp())).
+
+claimset_exp() ->
+    #{exp => integer_to_binary(epoch())}.
+
+valid_exp() ->
+    #{exp => integer_to_binary(epoch())}.
+
+expired_exp() ->
+    #{exp => integer_to_binary(epoch() + drift() + 1)}.
+
+drift() ->
+    1000.
+
+epoch() -> erlang:system_time(seconds).
+
+%sub: The subject of the token
+verify_sub_claimset() ->
+    ?assertEqual({ok, valid_sub()}, jwte:check_claims(valid_sub(), sub_claimset())),
+    ?assertEqual({error, {invalid_sub(), sub_claimset()}}, jwte:check_claims(invalid_sub(), sub_claimset())).
+
+sub_claimset() ->
+    #{sub => <<"https://github.com/thomasbhatia/jwte">>}.
+
+valid_sub() ->
+    sub_claimset().
+
+invalid_sub() ->
+    #{sub => <<"https://github.com/thomasbhatia/dorayaki">>}.
+
+
+    
+
+%aud: The audience of the token
+%nbf: Defines the time before which the JWT MUST NOT be accepted for processing
+%iat: The time the JWT was issued. Can be used to determine the age of the JWT
+%jti: Unique identifier for the JWT. Can be used to prevent the JWT from being replayed. This is helpful for a one time use token.
 
 %% End tests
 

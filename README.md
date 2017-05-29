@@ -115,3 +115,10 @@ These are the claims that we create ourselves like user name, information, and o
 3. Private Claims
 A producer and consumer may agree to use claim names that are private. These are subject to collision, so use them with caution.
 
+
+
+
+application:get_env(jwte, foo).
+
+https://tools.ietf.org/html/rfc7519
+
