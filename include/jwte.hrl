@@ -13,20 +13,20 @@
 -define(ISS_CLAIMSET, application:get_env(jwte, iss)).
 -define(SUB_CLAIMSET, application:get_env(jwte, sub)).
 -define(AUD_CLAIMSET, application:get_env(jwte, aud)).
--define(EXP_CLAIMSET, epoch() + application:get_env(jwte, allowed_drift)).
+-define(EXP_CLAIMSET, application:get_env(jwte, allowed_drift)).
 -define(NBF_CLAIMSET, application:get_env(jwte, nbf)).
 -define(IAT_CLAIMSET, application:get_env(jwte, iat)).
 -define(JTI_CLAIMSET, application:get_env(jwte, jti)).
 
--define(ALGO, 
-        [{hs256, <<"HS256">>, sha256, hmac}, 
-         {hs384, <<"HS384">>, sha384, hmac}, 
+-define(ALGO,
+        [{hs256, <<"HS256">>, sha256, hmac},
+         {hs384, <<"HS384">>, sha384, hmac},
          {hs512, <<"HS512">>, sha512, hmac},
-         {rs256, <<"RS256">>, sha256, rsa}, 
-         {rs384, <<"RS384">>, sha384, rsa}, 
+         {rs256, <<"RS256">>, sha256, rsa},
+         {rs384, <<"RS384">>, sha384, rsa},
          {rs512, <<"RS512">>, sha512, rsa},
-         {ec256, <<"EC256">>, sha256, ec}, 
-         {ec384, <<"EC384">>, sha384, ec}, 
+         {ec256, <<"EC256">>, sha256, ec},
+         {ec384, <<"EC384">>, sha384, ec},
          {ec512, <<"EC512">>, sha512, ec}
          ]).
 
@@ -42,7 +42,7 @@
 % Y = jwte:verify(Z, "secret").
 
 % {ok, PriKeyPem} = file:read_file("test/rsakey_2048.pem").
-% ZO=jwte:sign(P, PriKeyPem, <<"RS512">>).  
+% ZO=jwte:sign(P, PriKeyPem, <<"RS512">>).
 % io:format("~p",[ZO]).
 
 % {ok, PublicKeyPem} = file:read_file("test/rsakey_2048_pub.pem").
@@ -50,7 +50,7 @@
 
 
 
-% 
+%
 % Z=
 % io:format("~p",[Z]).
 

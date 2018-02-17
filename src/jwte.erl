@@ -29,7 +29,8 @@
 %%====================================================================
 %% @doc Peek claims. Return claims without verifying signature.
 %%====================================================================
--spec peek(jwt()) -> #{'header':=_, 'payload':=_, 'signature':=_}.
+-type peek() :: map().
+-spec peek(jwt()) -> {ok, peek()}.
 peek(JWT) ->
     Unpacked = unpacker(JWT),
     % {ok, Header} = maps:get(header, Unpacked),
@@ -186,14 +187,14 @@ verify_key(#{sig := {ec, Algorithm}, key := ECPublicKeyPem, signing_input := Sig
 %%====================================================================
 % %% iss; sub; aud; exp; nbf; iat; jti;
 get_claims_set() ->
-    #{iss => ?ISS_CLAIMSET,
-      sub => ?SUB_CLAIMSET,
-      aud => ?AUD_CLAIMSET,
-      exp => ?EXP_CLAIMSET,
-      nbf => ?NBF_CLAIMSET,
-      iat => ?IAT_CLAIMSET,
-      jti => ?JTI_CLAIMSET
-    }.
+    {ok, ISS} = application:get_env(jwte, iss),
+    {ok, SUB} = application:get_env(jwte, sub),
+    {ok, AUD} = application:get_env(jwte, aud),
+    {ok, EXP} = application:get_env(jwte, allowed_drift),
+    {ok, NBF} = application:get_env(jwte, nbf),
+    {ok, IAT} = application:get_env(jwte, iat),
+    {ok, JTI} = application:get_env(jwte, jti),
+    #{iss => ISS, sub => SUB, aud => AUD, exp => EXP + epoch(), nbf => NBF, iat => IAT, jti => JTI}.
 
 check_claims(Claims) ->
     check_claims(Claims, get_claims_set()).
