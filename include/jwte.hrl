@@ -10,7 +10,13 @@
 % -define(RS384, <<"RS384">>).
 % -define(RS512, <<"RS512">>).
 
+-define(ISS_CLAIMSET, application:get_env(jwte, iss)).
+-define(SUB_CLAIMSET, application:get_env(jwte, sub)).
+-define(AUD_CLAIMSET, application:get_env(jwte, aud)).
 -define(EXP_CLAIMSET, epoch() + application:get_env(jwte, allowed_drift)).
+-define(NBF_CLAIMSET, application:get_env(jwte, nbf)).
+-define(IAT_CLAIMSET, application:get_env(jwte, iat)).
+-define(JTI_CLAIMSET, application:get_env(jwte, jti)).
 
 -define(ALGO, 
         [{hs256, <<"HS256">>, sha256, hmac}, 

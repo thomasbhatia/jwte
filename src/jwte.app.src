@@ -4,10 +4,11 @@
   {registered, []},
   {applications, [kernel, stdlib]},
   {env, [
-         {issuer, "MyAPP"},
+         {iss, <<"MyAPP">>},
+         {verify_issuer, true},
          {ttl, 9600},
          {allowed_drift, 1000},
-         {verify_issuer, true},
+         {nbf, 1496084471},
          {ec_keys, [
             %{pub, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_prikey.pem"])},
             %{pri, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_pubkey.pem"])}

@@ -16,7 +16,11 @@
 
 -type key() :: binary() | list().
 -type alg() :: binary() | list().
+
+-type jwt() :: binary().
+
 -export_type([key/0, alg/0]).
+
 
 %%====================================================================
 %% API functions
@@ -25,9 +29,14 @@
 %%====================================================================
 %% @doc Peek claims. Return claims without verifying signature.
 %%====================================================================
+-spec peek(jwt()) -> #{'header':=_, 'payload':=_, 'signature':=_}.
 peek(JWT) ->
-    {ok, Unpacked} = unpacker(JWT),
-    Payload = maps:get(payload, Unpacked),
+    Unpacked = unpacker(JWT),
+    % {ok, Header} = maps:get(header, Unpacked),
+    {ok, Payload} = maps:get(payload, Unpacked),
+    % Signature = maps:get(signature, Unpacked),
+    % _SigningInput = maps:get(signing_input, Unpacked),
+    % {ok, #{header => Header, payload => Payload, signature => Signature}}.
     {ok, Payload}.
 
 %%====================================================================
@@ -58,12 +67,14 @@ verify(JWT, Key) ->
     verify(JWT, Key, <<"HS256">>).
 
 verify(JWT, Key, Algorithm) ->
-    {ok, Unpacked} = unpacker(JWT),
+    Unpacked = unpacker(JWT),
+    {ok,  #{<<"alg">> := Alg, <<"typ">> := <<"JWT">>}} = maps:get(header, Unpacked),
+    {ok, Payload} = maps:get(payload, Unpacked),
+    Signature = maps:get(signature, Unpacked),
+    SigningInput = maps:get(signing_input, Unpacked),
     Type = get_signature_type(Algorithm),
-    Unpacked0 = Unpacked#{key => Key, sig => Type},
-    Unpacked1 = Unpacked0#{key_verified => verify_key(Unpacked0)},
-    Unpacked2 = 
-    verify(Unpacked1).
+    VerifyKey = verify_key(#{sig => Type, key => Key, signing_input => SigningInput, signature => Signature}),
+    verify(#{alg => Alg, key_verified => VerifyKey, sig => Type, payload => Payload}).
 
 verify(#{alg := Alg, key_verified := true, sig := {_Type, Sig_Alg}, payload := Payload}) when Alg == Sig_Alg ->
     {ok, Payload};
@@ -78,15 +89,51 @@ verify(#{alg := false}) ->
 %%====================================================================
 %% Unpacker
 %%====================================================================
-unpacker(JWT) ->
-    [Header_segment, Data] = binary:split(JWT, <<".">>),
-    [Payload_segment, Crypto_segment] = binary:split(Data, <<".">>),
-    [{<<"alg">>,Alg},{<<"typ">>,<<"JWT">>}] = jsx:decode(base64url:decode(Header_segment)),
-    Payload = jsx:decode(base64url:decode(Payload_segment)),
-    Signature = base64url:decode(Crypto_segment),
+-spec unpacker(jwt()) -> {ok, map()} | {error, term()}.
+unpacker(JWT) when is_binary(JWT) ->
+    [RawHeader, RawPayload, RawSignature] = binary:split(JWT, <<".">>, [global]),
+    unpacker(#{raw_header => RawHeader, raw_payload => RawPayload, raw_signature => RawSignature, header => [], payload => [], signature => []});
+unpacker(#{raw_header := RawHeader, header := []} = Data) ->
+    unpacker(Data#{header => decode_header(RawHeader)});
+unpacker(#{header := {ok, _Header}, raw_payload := RawPayload, payload := []} = Data) ->
+    unpacker(Data#{payload => decode_payload(RawPayload)});
+unpacker(#{payload := {ok, _Payload}, raw_signature := RawSignature, signature := []} = Data) ->
+    unpacker(Data#{signature => get_signature(RawSignature)});
+unpacker(#{payload := {ok, _Payload}, header := {ok, _Header}, signature := {ok, Signature}, raw_header := RawHeader, raw_payload := RawPayload} = Data) ->
+    {ok, SigningInputBin} = get_signing_input(RawHeader, RawPayload),
+    Data#{signing_input => SigningInputBin, signature => Signature};
+unpacker(_) ->
+    {error, error}.
+
+decode_header(RawHeader) when is_binary(RawHeader) ->
+    decode_header(#{b64 => decode_base64(RawHeader)});
+decode_header(#{b64 := {ok, B64Bin}}) ->
+    decode_header(#{json => decode_JSON(B64Bin)});
+decode_header(#{json := {ok, DecodedHeaderMap}}) ->
+    {ok, DecodedHeaderMap};
+decode_header(#{b64 := {error, Error}}) ->
+    {error, {decode_header, [Error]}};
+decode_header(#{json := {error, Error}}) ->
+    {error, {decode_header, [Error]}}.
+
+decode_payload(RawPayload) when is_binary(RawPayload) ->
+    decode_payload(#{b64 => decode_base64(RawPayload)});
+decode_payload(#{b64 := {ok, B64Bin}}) ->
+    decode_payload(#{json => decode_JSON(B64Bin)});
+decode_payload(#{json := {ok, DecodedPayloadMap}}) ->
+    {ok, DecodedPayloadMap};
+decode_payload(#{b64 := {error, Error}}) ->
+    {error, {decode_payload, [Error]}};
+decode_payload(#{json := {error, Error}}) ->
+    {error, {decode_payload, [Error]}}.
+
+get_signature(RawSignature) ->
+    Signature = base64url:decode(RawSignature),
+    {ok, Signature}.
+get_signing_input(Header_segment, Payload_segment) ->
     Signing_input = <<Header_segment/binary, ".", Payload_segment/binary>>,
-    Unpacked = #{alg => Alg, payload => Payload, signature => Signature, signing_input => Signing_input},
-    {ok, Unpacked}.
+    {ok, Signing_input}.
+
 
 %%====================================================================
 %% Signer
@@ -109,6 +156,7 @@ signer({ec, _Algorithm}, ECPrivateKeyPem, UnsignedToken) when is_binary(ECPrivat
       {'ECPrivateKey', _, not_encrypted} = Entry2] = public_key:pem_decode(ECPrivateKeyPem),
     ECPrivateKey = public_key:pem_entry_decode(Entry2),
     public_key:sign(UnsignedToken, sha512, ECPrivateKey).
+
 
 %%====================================================================
 %% Verify Key
@@ -138,42 +186,34 @@ verify_key(#{sig := {ec, Algorithm}, key := ECPublicKeyPem, signing_input := Sig
 %%====================================================================
 % %% iss; sub; aud; exp; nbf; iat; jti;
 get_claims_set() ->
-    #{iss => application:get_env(jwte, iss),
-      sub => application:get_env(jwte, sub),
-      aud => application:get_env(jwte, aud),
+    #{iss => ?ISS_CLAIMSET,
+      sub => ?SUB_CLAIMSET,
+      aud => ?AUD_CLAIMSET,
       exp => ?EXP_CLAIMSET,
-      nbf => application:get_env(jwte, nbf),
-      iat => application:get_env(jwte, iat),
-      jti => application:get_env(jwte, jti)
+      nbf => ?NBF_CLAIMSET,
+      iat => ?IAT_CLAIMSET,
+      jti => ?JTI_CLAIMSET
     }.
 
 check_claims(Claims) ->
     check_claims(Claims, get_claims_set()).
 
-% check_claims(#{iss := ISS} = Claims, #{iss := ISSSET} = ClaimsSet) when ISS =:= ISSSET ->
-%     check_claims(Claims, maps:remove(iss, ClaimsSet));
-
+check_claims(#{iss := ISS} = Claims, #{iss := ISSSET} = ClaimsSet) when ISS =:= ISSSET ->
+    check_claims(Claims, maps:remove(iss, ClaimsSet));
 check_claims(#{sub := Sub} = Claims, #{sub := SubSET} = ClaimsSet) when Sub =:= SubSET ->
     check_claims(Claims, maps:remove(sub, ClaimsSet));
-
-% check_claims(#{aud := AUD} = Claims, #{aud := AUDSET} = ClaimsSet) when AUD =:= AUDSET ->
-%     check_claims(Claims, maps:remove(aud, ClaimsSet));
-
+check_claims(#{aud := AUD} = Claims, #{aud := AUDSET} = ClaimsSet) when AUD =:= AUDSET ->
+    check_claims(Claims, maps:remove(aud, ClaimsSet));
 check_claims(#{exp := EXP} = Claims, #{exp := EXPSET} = ClaimsSet) when EXP =< EXPSET ->
     check_claims(Claims, maps:remove(exp, ClaimsSet));
-
-% check_claims(#{nbf := NBF} = Claims, #{nbf := NBFSET} = ClaimsSet) when NBF =:= NBFSET ->
-%     check_claims(Claims, maps:remove(nbf, ClaimsSet));
-
-% check_claims(#{iat := IAT} = Claims, #{iat := IATSET} = ClaimsSet) when IAT =:= IATSET ->
-%     check_claims(Claims, maps:remove(iat, ClaimsSet));
-
-% check_claims(#{jti := JTI} = Claims, #{jti := JTISET} = ClaimsSet) when JTI =:= JTISET ->
-%     check_claims(Claims, maps:remove(jti, ClaimsSet));
-
-check_claims(Claims, ClaimsSet) when map_size(ClaimsSet) == 0->
+check_claims(#{nbf := NBF} = Claims, #{nbf := NBFSET} = ClaimsSet) when NBF > NBFSET ->
+    check_claims(Claims, maps:remove(nbf, ClaimsSet));
+check_claims(#{iat := IAT} = Claims, #{iat := IATSET} = ClaimsSet) when IAT =:= IATSET ->
+    check_claims(Claims, maps:remove(iat, ClaimsSet));
+check_claims(#{jti := JTI} = Claims, #{jti := JTISET} = ClaimsSet) when JTI =:= JTISET ->
+    check_claims(Claims, maps:remove(jti, ClaimsSet));
+check_claims(Claims, ClaimsSet) when map_size(ClaimsSet) == 0 ->
     {ok, Claims};
-
 check_claims(Claims, ClaimsSet) ->
     {error, {Claims, ClaimsSet}}.
 
@@ -183,7 +223,7 @@ check_claims(Claims, ClaimsSet) ->
 %%====================================================================
 get_hash_algorithm(Bin) ->
     {_Title,_AlgorithmBin,HashAlgorithm,_SignatureType} = lists:keyfind(Bin, 2, ?ALGO),
-    HashAlgorithm.  
+    HashAlgorithm.
 
 get_signature_type(Bin) ->
     get_signature_type(lists:keyfind(Bin, 2, ?ALGO), Bin).
@@ -192,7 +232,31 @@ get_signature_type({_Title,AlgorithmBin,_HashAlgorithm,SignatureType}, _Bin) ->
 get_signature_type(false, Bin) ->
     erlang:error({badarg, Bin}).
 
-epoch() -> erlang:system_time(seconds).
+epoch() ->
+    erlang:system_time(seconds).
+
+decode_base64(B64Bin) ->
+    try base64url:decode(B64Bin) of
+        DecodedB64 when is_binary(DecodedB64) ->
+            {ok, DecodedB64}
+    catch
+        _Exc:_Type ->
+            throw({error, decoding_B64})
+    end.
+
+decode_JSON(JSONBin) ->
+    try jsx:decode(JSONBin, [return_maps]) of
+        DecodedJSON ->
+            {ok, DecodedJSON}
+    catch
+        _Exc:_Type ->
+            throw({error, decoding_JSON})
+    end.
+
+
+
+
+
 
 
 

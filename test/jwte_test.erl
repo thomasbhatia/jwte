@@ -10,14 +10,19 @@ jwte_test_() ->
          {"Verify HMAC without key", fun no_key_verify_hmac/0},
          {"Verify HMAC invalid key or algorithm", fun invalid_verify_hmac/0},
          {"Verify RSA", fun verify_rsa/0},
-         {"Verify RSA with invalid key or algorithm", fun invalid_verify_rsa/0},  
+         {"Verify RSA with invalid key or algorithm", fun invalid_verify_rsa/0},
          {"Sign HMAC", fun sign_hmac/0},
          {"Sign HMAC with invalid key or algorithm", fun invalid_sign_hmac/0},
          {"Sign RSA", fun sign_rsa/0},
          {"Sign RSA with invalid key or algorithm", fun invalid_sign_rsa/0},
          {"Sign and Verify EC", fun sign_verify_ec/0},
+         {"verify ISS claim", fun verify_claim_iss/0},
          {"Verify EXP claim", fun verify_claim_exp/0},
-         {"verify SUB claim", fun verify_sub_claimset/0}
+         {"verify SUB claim", fun verify_claim_sub/0},
+         {"verify NBF claim", fun verify_claim_nbf/0},
+         {"verify AUD claim", fun verify_claim_aud/0},
+         {"verify IAT claim", fun verify_claim_iat/0},
+         {"verify JTI claim", fun verify_claim_jti/0}
         ].
 
 rsa_pri_pem() ->
@@ -66,15 +71,29 @@ claims() ->
     {<<"name">>, <<"John Doe">>},
     {<<"admin">>, true}].
 
+claims_map() ->
+    #{<<"sub">> => <<"1234567890">>,
+      <<"name">> => <<"John Doe">> ,
+      <<"admin">> => true}.
+
+set_env() ->
+    application:set_env(jwte, iss, <<"EOIO">>),
+    application:set_env(jwte, sub),
+    application:set_env(jwte, aud),
+    application:set_env(jwte, allowed_drift, epoch() + drift()),
+    application:set_env(jwte, nbf),
+    application:set_env(jwte, iat),
+    application:set_env(jwte, jti).
+
 %% Tests
 check_peek() ->
-    ?assertEqual({ok, claims()}, jwte:peek(jwt(hs256))).
+    ?assertEqual({ok, claims_map()}, jwte:peek(jwt(hs256))).
 
 verify_hmac() ->
-    [?assertEqual({ok, claims()}, verify_valid_hmac({Type, Bin})) || {Type, Bin} <- grp_HMAC()],
-    ?assertEqual({ok, claims()}, verify_valid_hmac_256_default()).
+    [?assertEqual({ok, claims_map()}, verify_valid_hmac({Type, Bin})) || {Type, Bin} <- grp_HMAC()],
+    ?assertEqual({ok, claims_map()}, verify_valid_hmac_256_default()).
 
-no_key_verify_hmac() -> 
+no_key_verify_hmac() ->
     ?assertException(error, function_clause, jwte:verify(jwt(hs256))).
 
 invalid_verify_hmac() ->
@@ -89,8 +108,8 @@ invalid_sign_hmac() ->
     ?assertError({badarg,_}, sign_invalid_hmac()).
 
 verify_rsa() ->
-    [?assertEqual({ok, claims()}, verify_valid_rsa({Type, Bin})) || {Type, Bin} <- grp_RSA()],
-    ?assertEqual({ok, claims()}, verify_valid_rsa_e_n(rs256)).
+    [?assertEqual({ok, claims_map()}, verify_valid_rsa({Type, Bin})) || {Type, Bin} <- grp_RSA()],
+    ?assertEqual({ok, claims_map()}, verify_valid_rsa_e_n(rs256)).
 
 invalid_verify_rsa() ->
     ?assertEqual({error,"Bad key or secret"}, verify_invalid_rsa_pub_pem()),
@@ -105,10 +124,22 @@ invalid_sign_rsa() ->
 
 sign_verify_ec() ->
     Signed = sign_ec(ec512),
-    ?assertEqual({ok, claims()}, verify_ec({Signed, <<"EC512">>})).
+    ?assertEqual({ok, claims_map()}, verify_ec({Signed, <<"EC512">>})).
 
 
 %iss: The issuer of the token
+verify_claim_iss() ->
+    ?assertEqual({ok, valid_iss()}, jwte:check_claims(valid_iss(), claimset_iss())),
+    ?assertEqual({error, {invalid_iss(), claimset_iss()}}, jwte:check_claims(invalid_iss(), claimset_iss())).
+
+valid_iss() ->
+    #{exp => <<"EOIO">>}.
+
+invalid_iss() ->
+    #{exp => <<"IOEO">>}.
+
+claimset_iss() ->
+    valid_iss().
 
 %exp: This will define the expiration in NumericDate value. The expiration MUST be after the current date/time.
 verify_claim_exp() ->
@@ -116,13 +147,13 @@ verify_claim_exp() ->
     ?assertEqual({error, {expired_exp(), claimset_exp()}}, jwte:check_claims(expired_exp(), claimset_exp())).
 
 claimset_exp() ->
-    #{exp => integer_to_binary(epoch())}.
+    #{exp => epoch()}.
 
 valid_exp() ->
-    #{exp => integer_to_binary(epoch())}.
+    #{exp => epoch()}.
 
 expired_exp() ->
-    #{exp => integer_to_binary(epoch() + drift() + 1)}.
+    #{exp => epoch() + drift() + 1}.
 
 drift() ->
     1000.
@@ -130,7 +161,7 @@ drift() ->
 epoch() -> erlang:system_time(seconds).
 
 %sub: The subject of the token
-verify_sub_claimset() ->
+verify_claim_sub() ->
     ?assertEqual({ok, valid_sub()}, jwte:check_claims(valid_sub(), sub_claimset())),
     ?assertEqual({error, {invalid_sub(), sub_claimset()}}, jwte:check_claims(invalid_sub(), sub_claimset())).
 
@@ -143,13 +174,47 @@ valid_sub() ->
 invalid_sub() ->
     #{sub => <<"https://github.com/thomasbhatia/dorayaki">>}.
 
-
-    
-
 %aud: The audience of the token
+verify_claim_aud() ->
+    ?assertEqual({ok, valid_aud()}, jwte:check_claims(valid_aud(), aud_claimset())),
+    ?assertEqual({error, {invalid_aud(), aud_claimset()}}, jwte:check_claims(invalid_aud(), aud_claimset())).
+
+aud_claimset() ->
+    #{aud => <<"https://github.com/thomasbhatia/">>}.
+
+valid_aud() ->
+    aud_claimset().
+
+invalid_aud() ->
+    #{aud => <<"https://github.com/">>}.
+
 %nbf: Defines the time before which the JWT MUST NOT be accepted for processing
+verify_claim_nbf() ->
+    ?assertEqual({ok, valid_nbf()}, jwte:check_claims(valid_nbf(), claimset_nbf())),
+    ?assertEqual({error, {pre_validity_nbf(), claimset_nbf()}}, jwte:check_claims(pre_validity_nbf(), claimset_nbf())).
+
+claimset_nbf() ->
+    #{nbf => 1496084471}.
+
+valid_nbf() ->
+    #{nbf => epoch()}.
+
+pre_validity_nbf() ->
+    #{nbf => 1496074471}.
+
 %iat: The time the JWT was issued. Can be used to determine the age of the JWT
+verify_claim_iat() ->
+    ?assertEqual({ok, valid_iat()}, jwte:check_claims(valid_iat(), valid_iat())).
+
+valid_iat() ->
+    #{iat => epoch()}.
+
 %jti: Unique identifier for the JWT. Can be used to prevent the JWT from being replayed. This is helpful for a one time use token.
+verify_claim_jti() ->
+    ?assertEqual({ok, valid_jti()}, jwte:check_claims(valid_jti(), valid_jti())).
+
+valid_jti() ->
+    #{iat => "spacegoesdowndown"}.
 
 %% End tests
 
@@ -205,11 +270,11 @@ verify_ec({Signed, Bin}) ->
 
 %% Sign EC
 sign_ec(ec512) ->
-    jwte:sign(claims(), ec_pri_pem(), <<"EC512">>).
+    jwte:sign(claims_map(), ec_pri_pem(), <<"EC512">>).
 
 grp_HMAC() ->
     [{hs256, <<"HS256">>}, {hs384, <<"HS384">>}, {hs512, <<"HS512">>}].
-grp_RSA() -> 
+grp_RSA() ->
     [{rs256, <<"RS256">>}, {rs384, <<"RS384">>}, {rs512, <<"RS512">>}].
 grp_EC() ->
     [{ec512, <<"EC512">>}].
