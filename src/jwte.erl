@@ -2,11 +2,9 @@
 % Supports HMAC, RSA, EC. TODO: Pass atom instead of Binary Algorithm.
 %% use verify_strict?
 %% Typespec
-% Add cuttlefish config
 
 -module(jwte).
 
--include("jwte.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
 %% API exports
@@ -25,6 +23,17 @@
 
 -export_type([key/0, alg/0]).
 
+-define(ALGO,
+        [{hs256, <<"HS256">>, sha256, hmac},
+         {hs384, <<"HS384">>, sha384, hmac},
+         {hs512, <<"HS512">>, sha512, hmac},
+         {rs256, <<"RS256">>, sha256, rsa},
+         {rs384, <<"RS384">>, sha384, rsa},
+         {rs512, <<"RS512">>, sha512, rsa},
+         {ec256, <<"EC256">>, sha256, ec},
+         {ec384, <<"EC384">>, sha384, ec},
+         {ec512, <<"EC512">>, sha512, ec}
+         ]).
 
 %%====================================================================
 %% API functions
@@ -33,8 +42,7 @@
 %%====================================================================
 %% @doc Peek claims. Return claims without verifying signature.
 %%====================================================================
--type peek() :: map().
--spec peek(jwt()) -> {ok, peek()}.
+-spec peek(binary()) -> {ok, map()}.
 peek(JWT) ->
     Unpacked = unpacker(JWT),
     % {ok, Header} = maps:get(header, Unpacked),
@@ -106,29 +114,30 @@ verify(#{claims_verified := false}) ->
 %%====================================================================
 %% Unpacker
 %%====================================================================
--spec unpacker(jwt()) -> {ok, map()} | {error, term()}.
-unpacker(JWT) when is_binary(JWT) ->
+-spec unpacker(jwt()) -> map() | {error, term()}.
+unpacker(JWT) ->
     [RawHeader, RawPayload, RawSignature] = binary:split(JWT, <<".">>, [global]),
     Result = #{header => [], payload => [], signature => []},
-    unpacker(Result#{raw_header => RawHeader, raw_payload => RawPayload, raw_signature => RawSignature});
-unpacker(#{raw_header := RawHeader,
+    do_unpacking(Result#{raw_header => RawHeader, raw_payload => RawPayload, raw_signature => RawSignature}).
+
+do_unpacking(#{raw_header := RawHeader,
            header := []} = Data) ->
-    unpacker(Data#{header => decode_header(RawHeader)});
-unpacker(#{header := {ok, _Header},
+    do_unpacking(Data#{header => decode_header(RawHeader)});
+do_unpacking(#{header := {ok, _Header},
            raw_payload := RawPayload,
            payload := []} = Data) ->
-    unpacker(Data#{payload => decode_payload(RawPayload)});
-unpacker(#{payload := {ok, _Payload},
+    do_unpacking(Data#{payload => decode_payload(RawPayload)});
+do_unpacking(#{payload := {ok, _Payload},
            raw_signature := RawSignature,
            signature := []} = Data) ->
-    unpacker(Data#{signature => get_signature(RawSignature)});
-unpacker(#{payload := {ok, _Payload},
+    do_unpacking(Data#{signature => get_signature(RawSignature)});
+do_unpacking(#{payload := {ok, _Payload},
            header := {ok, _Header},
            signature := {ok, _Signature},
            raw_header := RawHeader,
            raw_payload := RawPayload} = Data) ->
     Data#{signing_input => get_signing_input(RawHeader, RawPayload)};
-unpacker(_) ->
+do_unpacking(_) ->
     throw({error, invalid_jwt}).
 
 decode_header(RawHeader) when is_binary(RawHeader) ->

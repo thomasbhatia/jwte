@@ -1,6 +1,5 @@
 -module(jwte_test).
 
--include("jwte.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
@@ -12,18 +11,23 @@ jwte_test_() ->
     }.
 
 setup() ->
-    Claims = [{iss, <<"MyAPP">>},
-           {sub, <<"AppAuth">>},
-           {aud, <<"InternalDivision">>},
-           {exp, true},
-           {allowed_drift, 1000},
-           {nbf, true},
-           {iat, true},
-           {jti, true}],
-    application:set_env(jwte, claims, Claims).
+    set_claims_env(),
+    set_claims_opt_env().
 
 cleanup(_Pid) ->
     application:set_env(jwte, claims, []).
+
+set_claims_env() -> [].
+    % [{<<"iss">>, <<"MyAPP">>},
+    %  {<<"sub">>, <<"AppAuth">>},
+    %  {<<"aud">>, <<"InternalDivision">>},
+    %  {<<"exp">>, true},
+    %  {<<"nbf">>, true},
+    %  {<<"iat">>, true},
+    %  {<<"jti">>, true}].
+
+set_claims_opt_env() ->
+    [{<<"allowed_drift">>, 1000}].
 
 jwte_tests_() ->
         [{"Peek at Claims", fun check_peek/0},
@@ -97,14 +101,6 @@ claims_map() ->
       <<"name">> => <<"John Doe">> ,
       <<"admin">> => true}.
 
-set_env() ->
-    application:set_env(jwte, <<"iss">>, <<"MyAPP">>),
-    application:set_env(jwte, <<"sub">>, <<"AppAuth">>),
-    application:set_env(jwte, <<"aud">>, <<"InternalDivision">>),
-    application:set_env(jwte, <<"exp">>, true),
-    application:set_env(jwte, <<"nbf">>, true),
-    application:set_env(jwte, <<"iat">>, true),
-    application:set_env(jwte, <<"jti">>, true).
 
 %% Tests
 check_peek() ->

@@ -1,14 +1,18 @@
 {application, jwte,
  [{description, "Light and compact yet full featured JSON Web TOken (JWT) library for Erlang"},
-  {vsn, "0.10.0"},
+  {vsn, "0.5.0"},
   {registered, []},
   {applications, [kernel, stdlib]},
-  {env, [
-         {iss, <<"MyAPP">>},
-         {verify_issuer, true},
-         {ttl, 9600},
-         {allowed_drift, 1000},
-         {nbf, 1496084471},
+  {env, [{claims_opt, [{<<"allowed_drift">>, 1000}]},
+         {claims, %% To enable checking for a claim, uncomment the line.
+          [{<<"iss">>, <<"MyAPP">>},
+           {<<"sub">>, <<"AppAuth">>},
+           {<<"aud">>, <<"InternalDivision">>},
+           {<<"exp">>, true},
+           {<<"nbf">>, true},
+           {<<"iat">>, true},
+           {<<"jti">>, true}
+          ]},
          {ec_keys, [
             %{pub, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_prikey.pem"])},
             %{pri, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_pubkey.pem"])}
