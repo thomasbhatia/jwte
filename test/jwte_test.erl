@@ -5,6 +5,27 @@
 -include_lib("public_key/include/public_key.hrl").
 
 jwte_test_() ->
+    {setup,
+    fun setup/0,
+    fun cleanup/1,
+    [jwte_tests_()]
+    }.
+
+setup() ->
+    Claims = [{iss, <<"MyAPP">>},
+           {sub, <<"AppAuth">>},
+           {aud, <<"InternalDivision">>},
+           {exp, true},
+           {allowed_drift, 1000},
+           {nbf, true},
+           {iat, true},
+           {jti, true}],
+    application:set_env(jwte, claims, Claims).
+
+cleanup(_Pid) ->
+    application:set_env(jwte, claims, []).
+
+jwte_tests_() ->
         [{"Peek at Claims", fun check_peek/0},
          {"Verify HMAC", fun verify_hmac/0},
          {"Verify HMAC without key", fun no_key_verify_hmac/0},
@@ -77,19 +98,20 @@ claims_map() ->
       <<"admin">> => true}.
 
 set_env() ->
-    application:set_env(jwte, iss, <<"EOIO">>),
-    application:set_env(jwte, sub),
-    application:set_env(jwte, aud),
-    application:set_env(jwte, allowed_drift, epoch() + drift()),
-    application:set_env(jwte, nbf),
-    application:set_env(jwte, iat),
-    application:set_env(jwte, jti).
+    application:set_env(jwte, <<"iss">>, <<"MyAPP">>),
+    application:set_env(jwte, <<"sub">>, <<"AppAuth">>),
+    application:set_env(jwte, <<"aud">>, <<"InternalDivision">>),
+    application:set_env(jwte, <<"exp">>, true),
+    application:set_env(jwte, <<"nbf">>, true),
+    application:set_env(jwte, <<"iat">>, true),
+    application:set_env(jwte, <<"jti">>, true).
 
 %% Tests
 check_peek() ->
     ?assertEqual({ok, claims_map()}, jwte:peek(jwt(hs256))).
 
 verify_hmac() ->
+    application:set_env(jwte, claims, []),
     [?assertEqual({ok, claims_map()}, verify_valid_hmac({Type, Bin})) || {Type, Bin} <- grp_HMAC()],
     ?assertEqual({ok, claims_map()}, verify_valid_hmac_256_default()).
 
@@ -129,92 +151,106 @@ sign_verify_ec() ->
 
 %iss: The issuer of the token
 verify_claim_iss() ->
-    ?assertEqual({ok, valid_iss()}, jwte:check_claims(valid_iss(), claimset_iss())),
-    ?assertEqual({error, {invalid_iss(), claimset_iss()}}, jwte:check_claims(invalid_iss(), claimset_iss())).
+    application:set_env(jwte, claims, [claimset_iss()]),
+    ?assertEqual(true, jwte:check_registered_claims(valid_iss())),
+    ?assertEqual(false, jwte:check_registered_claims(invalid_iss())).
 
 valid_iss() ->
-    #{exp => <<"EOIO">>}.
+    [{<<"iss">>, <<"MyAPP">>}].
 
 invalid_iss() ->
-    #{exp => <<"IOEO">>}.
+    [{<<"iss">>, <<"APP">>}].
 
 claimset_iss() ->
-    valid_iss().
+    {<<"iss">>, <<"MyAPP">>}.
 
 %exp: This will define the expiration in NumericDate value. The expiration MUST be after the current date/time.
 verify_claim_exp() ->
-    ?assertEqual({ok, valid_exp()}, jwte:check_claims(valid_exp(), claimset_exp())),
-    ?assertEqual({error, {expired_exp(), claimset_exp()}}, jwte:check_claims(expired_exp(), claimset_exp())).
+    application:set_env(jwte, claims, [claimset_exp()]),
+    application:set_env(jwte, claims_opt, [{<<"allowed_drift">>, drift()}]),
+    ?assertEqual(true, jwte:check_registered_claims(valid_exp())),
+    ?assertEqual(false, jwte:check_registered_claims(expired_exp())).
 
 claimset_exp() ->
-    #{exp => epoch()}.
+    {<<"exp">>, true}.
 
 valid_exp() ->
-    #{exp => epoch()}.
+    [{<<"exp">>, epoch()}].
 
 expired_exp() ->
-    #{exp => epoch() + drift() + 1}.
+    [{<<"exp">>, epoch() - drift() - 1}].
 
 drift() ->
     1000.
 
-epoch() -> erlang:system_time(seconds).
+epoch() -> os:system_time(seconds).
 
 %sub: The subject of the token
 verify_claim_sub() ->
-    ?assertEqual({ok, valid_sub()}, jwte:check_claims(valid_sub(), sub_claimset())),
-    ?assertEqual({error, {invalid_sub(), sub_claimset()}}, jwte:check_claims(invalid_sub(), sub_claimset())).
+    application:set_env(jwte, claims, [claimset_sub()]),
+    ?assertEqual(true, jwte:check_registered_claims(valid_sub_claim())),
+    ?assertEqual(false, jwte:check_registered_claims(invalid_sub_claim())).
 
-sub_claimset() ->
-    #{sub => <<"https://github.com/thomasbhatia/jwte">>}.
+claimset_sub() ->
+    {<<"sub">>, <<"https://github.com/thomasbhatia/jwte">>}.
 
-valid_sub() ->
-    sub_claimset().
+invalid_sub_claim() ->
+    [{<<"sub">>, <<"https://github.com/thomasbhatia/jwtefoo">>}].
 
-invalid_sub() ->
-    #{sub => <<"https://github.com/thomasbhatia/dorayaki">>}.
+valid_sub_claim() ->
+    [claimset_sub()].
 
 %aud: The audience of the token
 verify_claim_aud() ->
-    ?assertEqual({ok, valid_aud()}, jwte:check_claims(valid_aud(), aud_claimset())),
-    ?assertEqual({error, {invalid_aud(), aud_claimset()}}, jwte:check_claims(invalid_aud(), aud_claimset())).
+    application:set_env(jwte, claims, [claimset_aud()]),
+    ?assertEqual(true, jwte:check_registered_claims(valid_aud())),
+    ?assertEqual(false, jwte:check_registered_claims(invalid_aud())).
 
-aud_claimset() ->
-    #{aud => <<"https://github.com/thomasbhatia/">>}.
+claimset_aud() ->
+    {<<"aud">>, <<"https://github.com/thomasbhatia/jwte">>}.
 
 valid_aud() ->
-    aud_claimset().
+    [claimset_aud()].
 
 invalid_aud() ->
-    #{aud => <<"https://github.com/">>}.
+    [{<<"aud">>, <<"https://github.com/thomasbhatia/doraki">>}].
 
 %nbf: Defines the time before which the JWT MUST NOT be accepted for processing
 verify_claim_nbf() ->
-    ?assertEqual({ok, valid_nbf()}, jwte:check_claims(valid_nbf(), claimset_nbf())),
-    ?assertEqual({error, {pre_validity_nbf(), claimset_nbf()}}, jwte:check_claims(pre_validity_nbf(), claimset_nbf())).
+    application:set_env(jwte, claims, [claimset_nbf()]),
+    ?assertEqual(true, jwte:check_registered_claims(valid_nbf())),
+    ?assertEqual(false, jwte:check_registered_claims(pre_validity_nbf())).
 
 claimset_nbf() ->
-    #{nbf => 1496084471}.
+    {<<"nbf">>, true}.
 
 valid_nbf() ->
-    #{nbf => epoch()}.
+    [{<<"nbf">>, epoch()}].
 
 pre_validity_nbf() ->
-    #{nbf => 1496074471}.
+    [{<<"nbf">>, 1496074471}].
 
 %iat: The time the JWT was issued. Can be used to determine the age of the JWT
 verify_claim_iat() ->
-    ?assertEqual({ok, valid_iat()}, jwte:check_claims(valid_iat(), valid_iat())).
+    application:set_env(jwte, claims, [claimset_iat()]),
+    ?assertEqual(true, jwte:check_registered_claims(valid_iat())).
+
+claimset_iat() ->
+    {<<"iat">>, true}.
 
 valid_iat() ->
-    #{iat => epoch()}.
+    [claimset_iat()].
 
 %jti: Unique identifier for the JWT. Can be used to prevent the JWT from being replayed. This is helpful for a one time use token.
 verify_claim_jti() ->
-    ?assertEqual({ok, valid_jti()}, jwte:check_claims(valid_jti(), valid_jti())).
+    application:set_env(jwte, claims, [claimset_jti()]),
+    ?assertEqual(true, jwte:check_registered_claims(valid_jti())).
+
+claimset_jti() ->
+    {<<"jti">>, <<"spacegoesdowndown">>}.
 
 valid_jti() ->
-    #{iat => "spacegoesdowndown"}.
+    [claimset_jti()].
 
 %% End tests
 
