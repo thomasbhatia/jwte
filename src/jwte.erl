@@ -10,9 +10,13 @@
 -include_lib("public_key/include/public_key.hrl").
 
 %% API exports
--export([peek/1, sign/1, sign/2, sign/3, verify/1, verify/2, verify/3]).
+-export([peek/1]).
 
--export([check_claims/1, check_claims/2]).
+-export([sign/1, sign/2, sign/3]).
+
+-export([verify/1, verify/2, verify/3]).
+
+-export([check_registered_claims/1]).
 
 -type key() :: binary() | list().
 -type alg() :: binary() | list().
@@ -38,7 +42,7 @@ peek(JWT) ->
     % Signature = maps:get(signature, Unpacked),
     % _SigningInput = maps:get(signing_input, Unpacked),
     % {ok, #{header => Header, payload => Payload, signature => Signature}}.
-    {ok, Payload}.
+    {ok, maps:from_list(Payload)}.
 
 %%====================================================================
 %% @doc Sign claims. If no algorithm is specified we use HS256.
@@ -68,21 +72,33 @@ verify(JWT, Key) ->
     verify(JWT, Key, <<"HS256">>).
 
 verify(JWT, Key, Algorithm) ->
-    Unpacked = unpacker(JWT),
-    {ok,  #{<<"alg">> := Alg, <<"typ">> := <<"JWT">>}} = maps:get(header, Unpacked),
-    {ok, Payload} = maps:get(payload, Unpacked),
-    Signature = maps:get(signature, Unpacked),
-    SigningInput = maps:get(signing_input, Unpacked),
-    Type = get_signature_type(Algorithm),
-    VerifyKey = verify_key(#{sig => Type, key => Key, signing_input => SigningInput, signature => Signature}),
-    verify(#{alg => Alg, key_verified => VerifyKey, sig => Type, payload => Payload}).
+    UnpackedJWT = unpacker(JWT),
 
-verify(#{alg := Alg, key_verified := true, sig := {_Type, Sig_Alg}, payload := Payload}) when Alg == Sig_Alg ->
-    {ok, Payload};
+    {ok,  #{<<"alg">> := Alg, <<"typ">> := <<"JWT">>}} = maps:get(header, UnpackedJWT),
+    {ok, Payload} = maps:get(payload, UnpackedJWT),
+    {ok, Signature} = maps:get(signature, UnpackedJWT),
+    {ok, SigningInput} = maps:get(signing_input, UnpackedJWT),
+
+    {Type, SigAlgo} = get_signature_type(Algorithm),
+
+    VerifyKeyStatus = verify_key(#{sig => {Type, SigAlgo},
+                             key => Key,
+                             signing_input => SigningInput,
+                             signature => Signature}),
+
+    VerifyClaimsStatus = check_registered_claims(Payload),
+
+    verify(#{alg => Alg, key_verified => VerifyKeyStatus, sig_algo => SigAlgo, payload => Payload, claims_verified => VerifyClaimsStatus}).
+
+verify(#{alg := Alg, key_verified := true, sig_algo := SigAlgo, payload := Payload, claims_verified := true}) when Alg == SigAlgo ->
+    {ok, maps:from_list(Payload)};
+
 verify(#{key_verified := false}) ->
     {error, "Bad key or secret"};
 verify(#{alg := false}) ->
-    {error, "Algorithm mismatch"}.
+    {error, "Algorithm mismatch"};
+verify(#{claims_verified := false}) ->
+    {error, "Invalid claims"}.
 
 %%====================================================================
 %% Internal functions
@@ -93,18 +109,27 @@ verify(#{alg := false}) ->
 -spec unpacker(jwt()) -> {ok, map()} | {error, term()}.
 unpacker(JWT) when is_binary(JWT) ->
     [RawHeader, RawPayload, RawSignature] = binary:split(JWT, <<".">>, [global]),
-    unpacker(#{raw_header => RawHeader, raw_payload => RawPayload, raw_signature => RawSignature, header => [], payload => [], signature => []});
-unpacker(#{raw_header := RawHeader, header := []} = Data) ->
+    Result = #{header => [], payload => [], signature => []},
+    unpacker(Result#{raw_header => RawHeader, raw_payload => RawPayload, raw_signature => RawSignature});
+unpacker(#{raw_header := RawHeader,
+           header := []} = Data) ->
     unpacker(Data#{header => decode_header(RawHeader)});
-unpacker(#{header := {ok, _Header}, raw_payload := RawPayload, payload := []} = Data) ->
+unpacker(#{header := {ok, _Header},
+           raw_payload := RawPayload,
+           payload := []} = Data) ->
     unpacker(Data#{payload => decode_payload(RawPayload)});
-unpacker(#{payload := {ok, _Payload}, raw_signature := RawSignature, signature := []} = Data) ->
+unpacker(#{payload := {ok, _Payload},
+           raw_signature := RawSignature,
+           signature := []} = Data) ->
     unpacker(Data#{signature => get_signature(RawSignature)});
-unpacker(#{payload := {ok, _Payload}, header := {ok, _Header}, signature := {ok, Signature}, raw_header := RawHeader, raw_payload := RawPayload} = Data) ->
-    {ok, SigningInputBin} = get_signing_input(RawHeader, RawPayload),
-    Data#{signing_input => SigningInputBin, signature => Signature};
+unpacker(#{payload := {ok, _Payload},
+           header := {ok, _Header},
+           signature := {ok, _Signature},
+           raw_header := RawHeader,
+           raw_payload := RawPayload} = Data) ->
+    Data#{signing_input => get_signing_input(RawHeader, RawPayload)};
 unpacker(_) ->
-    {error, error}.
+    throw({error, invalid_jwt}).
 
 decode_header(RawHeader) when is_binary(RawHeader) ->
     decode_header(#{b64 => decode_base64(RawHeader)});
@@ -120,7 +145,7 @@ decode_header(#{json := {error, Error}}) ->
 decode_payload(RawPayload) when is_binary(RawPayload) ->
     decode_payload(#{b64 => decode_base64(RawPayload)});
 decode_payload(#{b64 := {ok, B64Bin}}) ->
-    decode_payload(#{json => decode_JSON(B64Bin)});
+    decode_payload(#{json => decode_JSON(B64Bin, [])});
 decode_payload(#{json := {ok, DecodedPayloadMap}}) ->
     {ok, DecodedPayloadMap};
 decode_payload(#{b64 := {error, Error}}) ->
@@ -128,9 +153,11 @@ decode_payload(#{b64 := {error, Error}}) ->
 decode_payload(#{json := {error, Error}}) ->
     {error, {decode_payload, [Error]}}.
 
+-spec get_signature(binary()) -> {ok, list()}.
 get_signature(RawSignature) ->
     Signature = base64url:decode(RawSignature),
     {ok, Signature}.
+
 get_signing_input(Header_segment, Payload_segment) ->
     Signing_input = <<Header_segment/binary, ".", Payload_segment/binary>>,
     {ok, Signing_input}.
@@ -162,10 +189,14 @@ signer({ec, _Algorithm}, ECPrivateKeyPem, UnsignedToken) when is_binary(ECPrivat
 %%====================================================================
 %% Verify Key
 %%====================================================================
-verify_key(#{sig := {hmac, Algorithm}, key := Key, signing_input := Signing_input, signature := Signature}) ->
+verify_key(#{sig := {hmac, Algorithm},
+             key := Key,
+             signing_input := Signing_input,
+             signature := Signature}) ->
     Digest = get_hash_algorithm(Algorithm),
     crypto:hmac(Digest, Key, Signing_input) == Signature;
-verify_key(#{sig := {rsa, _Algorithm}, key := PublicKeyPem} = P) when is_binary(PublicKeyPem) ->
+verify_key(#{sig := {rsa, _Algorithm},
+             key := PublicKeyPem} = P) when is_binary(PublicKeyPem) ->
     [RSAEntry] = public_key:pem_decode(PublicKeyPem),
     Key = public_key:pem_entry_decode(RSAEntry),
     E = Key#'RSAPublicKey'.publicExponent,
@@ -173,51 +204,92 @@ verify_key(#{sig := {rsa, _Algorithm}, key := PublicKeyPem} = P) when is_binary(
     NP = P#{key := [E,N]},
     verify_key(NP);
 %%% @doc Key is decoded PEM.
-verify_key(#{sig := {rsa, Algorithm}, key := [E, N], signing_input := Signing_input, signature := Signature}) ->
+verify_key(#{sig := {rsa, Algorithm},
+             key := [E, N],
+             signing_input := Signing_input,
+             signature := Signature}) ->
     Digest = get_hash_algorithm(Algorithm),
     crypto:verify(rsa, Digest, Signing_input, Signature, [E, N]);
-verify_key(#{sig := {ec, Algorithm}, key := ECPublicKeyPem, signing_input := Signing_input, signature := Signature}) when is_binary(ECPublicKeyPem) ->
+verify_key(#{sig := {ec, Algorithm},
+             key := ECPublicKeyPem,
+             signing_input := Signing_input,
+             signature := Signature}) when is_binary(ECPublicKeyPem) ->
     [{'SubjectPublicKeyInfo', _, _} = PubEntry0] = public_key:pem_decode(ECPublicKeyPem),
     ECPublicKey = public_key:pem_entry_decode(PubEntry0),
     Digest = get_hash_algorithm(Algorithm),
     public_key:verify(Signing_input, Digest, Signature, ECPublicKey).
 
 %%====================================================================
-%% Verify Registered Claims
+%% @doc Verify registered claims
+%% Reference: https://www.iana.org/assignments/jwt/jwt.xhtml
+%% RFC 7519 Section 4.1.1 - 4.1.7:
+%% iss, sub, aud, exp, nbf, iat, jti
 %%====================================================================
-% %% iss; sub; aud; exp; nbf; iat; jti;
-get_claims_set() ->
-    {ok, ISS} = application:get_env(jwte, iss),
-    {ok, SUB} = application:get_env(jwte, sub),
-    {ok, AUD} = application:get_env(jwte, aud),
-    {ok, EXP} = application:get_env(jwte, allowed_drift),
-    {ok, NBF} = application:get_env(jwte, nbf),
-    {ok, IAT} = application:get_env(jwte, iat),
-    {ok, JTI} = application:get_env(jwte, jti),
-    #{iss => ISS, sub => SUB, aud => AUD, exp => EXP + epoch(), nbf => NBF, iat => IAT, jti => JTI}.
 
-check_claims(Claims) ->
-    check_claims(Claims, get_claims_set()).
+get_registered_claims_set() ->
+    {ok, EnabledClaims} = application:get_env(jwte, claims),
+    EnabledClaims.
 
-check_claims(#{iss := ISS} = Claims, #{iss := ISSSET} = ClaimsSet) when ISS =:= ISSSET ->
-    check_claims(Claims, maps:remove(iss, ClaimsSet));
-check_claims(#{sub := Sub} = Claims, #{sub := SubSET} = ClaimsSet) when Sub =:= SubSET ->
-    check_claims(Claims, maps:remove(sub, ClaimsSet));
-check_claims(#{aud := AUD} = Claims, #{aud := AUDSET} = ClaimsSet) when AUD =:= AUDSET ->
-    check_claims(Claims, maps:remove(aud, ClaimsSet));
-check_claims(#{exp := EXP} = Claims, #{exp := EXPSET} = ClaimsSet) when EXP =< EXPSET ->
-    check_claims(Claims, maps:remove(exp, ClaimsSet));
-check_claims(#{nbf := NBF} = Claims, #{nbf := NBFSET} = ClaimsSet) when NBF > NBFSET ->
-    check_claims(Claims, maps:remove(nbf, ClaimsSet));
-check_claims(#{iat := IAT} = Claims, #{iat := IATSET} = ClaimsSet) when IAT =:= IATSET ->
-    check_claims(Claims, maps:remove(iat, ClaimsSet));
-check_claims(#{jti := JTI} = Claims, #{jti := JTISET} = ClaimsSet) when JTI =:= JTISET ->
-    check_claims(Claims, maps:remove(jti, ClaimsSet));
-check_claims(Claims, ClaimsSet) when map_size(ClaimsSet) == 0 ->
-    {ok, Claims};
-check_claims(Claims, ClaimsSet) ->
-    {error, {Claims, ClaimsSet}}.
+get_a_claim_set(Claim) ->
+    {ok, Options} = application:get_env(jwte, claims_opt),
+    lists:keyfind(Claim, 1, Options).
 
+%% @doc check for duplicate claims
+check_registered_claims(Claims) ->
+    ContainsDuplicates = length(proplists:get_keys(Claims)) /= length(Claims),
+    case ContainsDuplicates of
+        true ->
+            {error, found_duplicate_claims};
+        false ->
+            ClaimsSet = get_registered_claims_set(),
+            VerifiedList = do_verify_claims(ClaimsSet, Claims, []),
+            lists:all(fun({_K, Value}) ->
+                Value == true
+            end, VerifiedList)
+    end.
+
+do_verify_claims([], _Claims, Acc) ->
+    Acc;
+do_verify_claims([{_K, false} | ClaimsSet], Claims, Acc) ->
+    do_verify_claims(ClaimsSet, Claims, Acc);
+do_verify_claims([ClaimSet | ClaimsSet], Claims, Acc) ->
+    Status = verify_claim(ClaimSet, Claims),
+    do_verify_claims(ClaimsSet, Claims, [{ClaimSet, Status} | Acc]).
+
+verify_claim({K, _V} = ClaimSet, Claims) ->
+    case lists:keyfind(K, 1, Claims) of
+        false ->
+            false;
+        {_, Claim} ->
+            do_verify_claim(ClaimSet, Claim)
+    end.
+
+do_verify_claim({_, false}, _Claim) ->
+    true;
+
+do_verify_claim({<<"iss">>, ClaimSet}, Claim) ->
+    ClaimSet == Claim;
+
+do_verify_claim({<<"sub">>, ClaimSet}, Claim) ->
+    ClaimSet == Claim;
+
+do_verify_claim({<<"aud">>, ClaimSet}, Claim) ->
+    ClaimSet == Claim;
+
+do_verify_claim({<<"exp">>, true}, Claim) ->
+    DriftEnv = get_a_claim_set(<<"allowed_drift">>),
+    Drift = if DriftEnv == false -> 0; true -> {_, DSet} = DriftEnv, DSet end,
+    io:format(user, "Claim ~p~n Drift ~p~n", [Claim, Drift]),
+    epoch() - (Claim + Drift) < 0;
+
+do_verify_claim({<<"nbf">>, true}, Claim) ->
+    Claim - epoch() >= 0;
+
+do_verify_claim({<<"iat">>, true}, Claim) ->
+    Claim;
+
+do_verify_claim({<<"jti">>, ClaimSet}, Claim) ->
+    ClaimSet == Claim.
 
 %%====================================================================
 %% Helpers
@@ -228,13 +300,13 @@ get_hash_algorithm(Bin) ->
 
 get_signature_type(Bin) ->
     get_signature_type(lists:keyfind(Bin, 2, ?ALGO), Bin).
-get_signature_type({_Title,AlgorithmBin,_HashAlgorithm,SignatureType}, _Bin) ->
+get_signature_type({_Title, AlgorithmBin, _HashAlgorithm, SignatureType}, _Bin) ->
     {SignatureType, AlgorithmBin};
 get_signature_type(false, Bin) ->
     erlang:error({badarg, Bin}).
 
 epoch() ->
-    erlang:system_time(seconds).
+    os:system_time(seconds).
 
 decode_base64(B64Bin) ->
     try base64url:decode(B64Bin) of
@@ -246,20 +318,13 @@ decode_base64(B64Bin) ->
     end.
 
 decode_JSON(JSONBin) ->
-    try jsx:decode(JSONBin, [return_maps]) of
+    decode_JSON(JSONBin, [return_maps]).
+
+decode_JSON(JSONBin, Opts) ->
+    try jsx:decode(JSONBin, Opts) of
         DecodedJSON ->
             {ok, DecodedJSON}
     catch
         _Exc:_Type ->
             throw({error, decoding_JSON})
     end.
-
-
-
-
-
-
-
-
-
-
