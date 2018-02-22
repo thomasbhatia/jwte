@@ -1,3 +1,33 @@
+%% Copyright (c) 2016, Thomas Bhatia <thomas.bhatia@eo.io>.
+%% All rights reserved.
+%%
+%% Redistribution and use in source and binary forms, with or without
+%% modification, are permitted provided that the following conditions are
+%% met:
+%%
+%% * Redistributions of source code must retain the above copyright
+%%   notice, this list of conditions and the following disclaimer.
+%%
+%% * Redistributions in binary form must reproduce the above copyright
+%%   notice, this list of conditions and the following disclaimer in the
+%%   documentation and/or other materials provided with the distribution.
+%%
+%% * The names of its contributors may not be used to endorse or promote
+%%   products derived from this software without specific prior written
+%%   permission.
+%%
+%% THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+%% "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+%% LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+%% A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+%% OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+%% SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+%% LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+%% OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 -module(jwte_test).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -5,9 +35,9 @@
 
 jwte_test_() ->
     {setup,
-    fun setup/0,
-    fun cleanup/1,
-    [jwte_tests_()]
+        fun setup/0,
+        fun cleanup/1,
+        [jwte_tests_()]
     }.
 
 setup() ->
@@ -17,14 +47,8 @@ setup() ->
 cleanup(_Pid) ->
     application:set_env(jwte, claims, []).
 
-set_claims_env() -> [].
-    % [{<<"iss">>, <<"MyAPP">>},
-    %  {<<"sub">>, <<"AppAuth">>},
-    %  {<<"aud">>, <<"InternalDivision">>},
-    %  {<<"exp">>, true},
-    %  {<<"nbf">>, true},
-    %  {<<"iat">>, true},
-    %  {<<"jti">>, true}].
+set_claims_env() ->
+    [].
 
 set_claims_opt_env() ->
     [{<<"allowed_drift">>, 1000}].
@@ -33,7 +57,7 @@ jwte_tests_() ->
         [{"Peek at Claims", fun check_peek/0},
          {"Verify HMAC", fun verify_hmac/0},
          {"Verify HMAC without key", fun no_key_verify_hmac/0},
-         {"Verify HMAC invalid key or algorithm", fun invalid_verify_hmac/0},
+         {"Verify HMAC invalid key or algorithm mismatch", fun invalid_verify_hmac/0},
          {"Verify RSA", fun verify_rsa/0},
          {"Verify RSA with invalid key or algorithm", fun invalid_verify_rsa/0},
          {"Sign HMAC", fun sign_hmac/0},
@@ -47,7 +71,9 @@ jwte_tests_() ->
          {"verify NBF claim", fun verify_claim_nbf/0},
          {"verify AUD claim", fun verify_claim_aud/0},
          {"verify IAT claim", fun verify_claim_iat/0},
-         {"verify JTI claim", fun verify_claim_jti/0}
+         {"verify JTI claim", fun verify_claim_jti/0},
+         {"verify invalid claim", fun verify_jwt_invalid_claim/0}
+         %  {"verify unknown algo claim", fun verify_jwt_unknown_algo/0}
         ].
 
 rsa_pri_pem() ->
@@ -115,15 +141,15 @@ no_key_verify_hmac() ->
     ?assertException(error, function_clause, jwte:verify(jwt(hs256))).
 
 invalid_verify_hmac() ->
-    ?assertEqual({error,"Bad key or secret"}, verify_invalid_hmac_secret()),
-    ?assertError({badarg,_}, verify_invalid_hmac()).
+    ?assertEqual({error, "Bad key or secret"}, verify_invalid_hmac_secret()),
+    ?assertException(throw, {error, unsupported_algorithm}, verify_invalid_hmac_mismatch()).
 
 sign_hmac() ->
     [?assertEqual(jwt(Type), sign_valid_hmac(Bin)) || {Type, Bin} <- grp_HMAC()],
     ?assertEqual(jwt(hs256), sign_valid_hmac_256_default()).
 
 invalid_sign_hmac() ->
-    ?assertError({badarg,_}, sign_invalid_hmac()).
+    ?assertException(throw, {error, unsupported_algorithm}, sign_invalid_hmac()).
 
 verify_rsa() ->
     [?assertEqual({ok, claims_map()}, verify_valid_rsa({Type, Bin})) || {Type, Bin} <- grp_RSA()],
@@ -131,14 +157,14 @@ verify_rsa() ->
 
 invalid_verify_rsa() ->
     ?assertEqual({error,"Bad key or secret"}, verify_invalid_rsa_pub_pem()),
-    ?assertError({badarg,_}, verify_invalid_rsa_algo()).
+    ?assertEqual({error, "Bad key or secret"}, verify_invalid_rsa_algo_mismatch()).
 
 sign_rsa() ->
     [?assertEqual(jwt(Type), sign_valid_rsa(Bin)) || {Type, Bin} <- grp_RSA()],
     ?assertEqual(jwt(rs256), sign_valid_rsa_e_n_d(rs256)).
 
 invalid_sign_rsa() ->
-    ?assertError({badarg,_}, sign_invalid_rsa_algo()).
+    ?assertException(throw, {error, unsupported_algorithm}, sign_invalid_rsa_algo()).
 
 sign_verify_ec() ->
     Signed = sign_ec(ec512),
@@ -248,6 +274,16 @@ claimset_jti() ->
 valid_jti() ->
     [claimset_jti()].
 
+verify_jwt_invalid_claim() ->
+    application:set_env(jwte, claims, [claimset_jti()]),
+    ?assertEqual({error, "Invalid claims"}, jwte:verify(jwt_invalid_claim(hs256), secret())).
+
+claimset_invalid() ->
+    {<<"jti">>, <<"spacegoesupup">>}.
+
+invalid_claim() ->
+    [claimset_invalid()].
+
 %% End tests
 
 %% Verify HMAC
@@ -260,8 +296,8 @@ verify_valid_hmac({Type, Bin}) ->
 verify_invalid_hmac_secret() ->
     jwte:verify(jwt(hs256), bad_secret()).
 
-verify_invalid_hmac() ->
-    jwte:verify(jwt(hs256), secret(), <<"HS111">>).
+verify_invalid_hmac_mismatch() ->
+    jwte:verify(jwt(hs256), secret(), <<"512">>).
 
 %% Sign HMAC
 sign_valid_hmac_256_default() ->
@@ -283,8 +319,8 @@ verify_valid_rsa_e_n(rs256) ->
 verify_invalid_rsa_pub_pem() ->
     jwte:verify(jwt(hs256), invalid_rsa_pub_pem()).
 
-verify_invalid_rsa_algo() ->
-    jwte:verify(jwt(hs256), rsa_pub_pem(), <<"RS111">>).
+verify_invalid_rsa_algo_mismatch() ->
+    jwte:verify(jwt(hs256), rsa_pub_pem(), <<"RS256">>).
 
 %% Sign RSA
 sign_valid_rsa(BIN) ->
@@ -310,6 +346,9 @@ grp_RSA() ->
     [{rs256, <<"RS256">>}, {rs384, <<"RS384">>}, {rs512, <<"RS512">>}].
 grp_EC() ->
     [{ec512, <<"EC512">>}].
+
+jwt_invalid_claim(hs256) ->
+    <<"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlzcyI6IkFQUCJ9.8UNUY-VAeqplr78JaA42T_zLuQLcryPmUgZ4wDbL54Q">>.
 
 jwt(hs256) ->
     <<"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWV9.TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ">>;

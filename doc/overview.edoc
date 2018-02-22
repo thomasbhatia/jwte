@@ -1,0 +1,6 @@
+
+   @author Thomas Bhatia <thomas.bhatia@eo.io>
+   @copyright 2016 Thomas Bhatia
+   @version 0.5.0
+   @title JWTE - A JSON Web Token (JWT) Library
+   @doc JWTE, a light and compact yet fully IETF RFC 7518 compliant JSON Web Token (JWT) library for Erlang.

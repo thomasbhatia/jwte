@@ -1,7 +1,33 @@
-% TODO:
-% Supports HMAC, RSA, EC. TODO: Pass atom instead of Binary Algorithm.
-%% use verify_strict?
-%% Typespec
+%% Copyright (c) 2016, Thomas Bhatia <thomas.bhatia@eo.io>.
+%% All rights reserved.
+%%
+%% Redistribution and use in source and binary forms, with or without
+%% modification, are permitted provided that the following conditions are
+%% met:
+%%
+%% * Redistributions of source code must retain the above copyright
+%%   notice, this list of conditions and the following disclaimer.
+%%
+%% * Redistributions in binary form must reproduce the above copyright
+%%   notice, this list of conditions and the following disclaimer in the
+%%   documentation and/or other materials provided with the distribution.
+%%
+%% * The names of its contributors may not be used to endorse or promote
+%%   products derived from this software without specific prior written
+%%   permission.
+%%
+%% THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+%% "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+%% LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+%% A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+%% OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+%% SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+%% LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+%% DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+%% THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+%% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+%% OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 
 -module(jwte).
 
@@ -41,19 +67,17 @@
 
 %%====================================================================
 %% @doc Peek claims. Return claims without verifying signature.
+%% @end
 %%====================================================================
 -spec peek(binary()) -> {ok, map()}.
 peek(JWT) ->
     Unpacked = unpacker(JWT),
-    % {ok, Header} = maps:get(header, Unpacked),
     {ok, Payload} = maps:get(payload, Unpacked),
-    % Signature = maps:get(signature, Unpacked),
-    % _SigningInput = maps:get(signing_input, Unpacked),
-    % {ok, #{header => Header, payload => Payload, signature => Signature}}.
     {ok, maps:from_list(Payload)}.
 
 %%====================================================================
 %% @doc Sign claims. If no algorithm is specified we use HS256.
+%% @end
 %%====================================================================
 sign(Claims, Key) ->
     sign(#{claims => Claims, key => Key, alg => <<"HS256">>}).
@@ -75,19 +99,25 @@ sign(#{claims := Claims, key := Key, alg := Alg}) when is_binary(Alg) ->
 
 %%====================================================================
 %% @doc Verify key and claims
+%% @end
 %%====================================================================
 verify(JWT, Key) ->
     verify(JWT, Key, <<"HS256">>).
 
-verify(JWT, Key, Algorithm) ->
+verify(JWT, Key, Algorithm) when is_binary(Algorithm) ->
+    {Type, SigAlgo} = get_signature_type(Algorithm),
+    verify(JWT, Key, {Type, SigAlgo});
+
+verify(_JWT, _Key, {error, Error}) ->
+    {error, Error};
+
+verify(JWT, Key, {Type, SigAlgo}) ->
     UnpackedJWT = unpacker(JWT),
 
     {ok,  #{<<"alg">> := Alg, <<"typ">> := <<"JWT">>}} = maps:get(header, UnpackedJWT),
     {ok, Payload} = maps:get(payload, UnpackedJWT),
     {ok, Signature} = maps:get(signature, UnpackedJWT),
     {ok, SigningInput} = maps:get(signing_input, UnpackedJWT),
-
-    {Type, SigAlgo} = get_signature_type(Algorithm),
 
     VerifyKeyStatus = verify_key(#{sig => {Type, SigAlgo},
                              key => Key,
@@ -96,11 +126,18 @@ verify(JWT, Key, Algorithm) ->
 
     VerifyClaimsStatus = check_registered_claims(Payload),
 
-    verify(#{alg => Alg, key_verified => VerifyKeyStatus, sig_algo => SigAlgo, payload => Payload, claims_verified => VerifyClaimsStatus}).
+    verify(#{alg => Alg,
+             key_verified => VerifyKeyStatus,
+             sig_algo => SigAlgo,
+             payload => Payload,
+             claims_verified => VerifyClaimsStatus}).
 
-verify(#{alg := Alg, key_verified := true, sig_algo := SigAlgo, payload := Payload, claims_verified := true}) when Alg == SigAlgo ->
+verify(#{alg := Alg,
+         key_verified := true,
+         sig_algo := SigAlgo,
+         payload := Payload,
+         claims_verified := true}) when Alg == SigAlgo ->
     {ok, maps:from_list(Payload)};
-
 verify(#{key_verified := false}) ->
     {error, "Bad key or secret"};
 verify(#{alg := false}) ->
@@ -112,7 +149,8 @@ verify(#{claims_verified := false}) ->
 %% Internal functions
 %%====================================================================
 %%====================================================================
-%% Unpacker
+%% @doc Unpacker
+%% @end
 %%====================================================================
 -spec unpacker(jwt()) -> map() | {error, term()}.
 unpacker(JWT) ->
@@ -173,7 +211,8 @@ get_signing_input(Header_segment, Payload_segment) ->
 
 
 %%====================================================================
-%% Signer
+%% @doc Signer
+%% %% @end
 %%====================================================================
 signer({hmac, Algorithm}, Secret, UnsignedToken) ->
     Digest = get_hash_algorithm(Algorithm),
@@ -192,11 +231,14 @@ signer({ec, _Algorithm}, ECPrivateKeyPem, UnsignedToken) when is_binary(ECPrivat
     [{'EcpkParameters', _, not_encrypted} = _Entry1,
       {'ECPrivateKey', _, not_encrypted} = Entry2] = public_key:pem_decode(ECPrivateKeyPem),
     ECPrivateKey = public_key:pem_entry_decode(Entry2),
-    public_key:sign(UnsignedToken, sha512, ECPrivateKey).
+    public_key:sign(UnsignedToken, sha512, ECPrivateKey);
 
+signer({error, Error}, _, _) ->
+    {error, Error}.
 
 %%====================================================================
-%% Verify Key
+%% @doc Verify Key
+%% @end
 %%====================================================================
 verify_key(#{sig := {hmac, Algorithm},
              key := Key,
@@ -275,33 +317,27 @@ verify_claim({K, _V} = ClaimSet, Claims) ->
 
 do_verify_claim({_, false}, _Claim) ->
     true;
-
 do_verify_claim({<<"iss">>, ClaimSet}, Claim) ->
     ClaimSet == Claim;
-
 do_verify_claim({<<"sub">>, ClaimSet}, Claim) ->
     ClaimSet == Claim;
-
 do_verify_claim({<<"aud">>, ClaimSet}, Claim) ->
     ClaimSet == Claim;
-
 do_verify_claim({<<"exp">>, true}, Claim) ->
     DriftEnv = get_a_claim_set(<<"allowed_drift">>),
     Drift = if DriftEnv == false -> 0; true -> {_, DSet} = DriftEnv, DSet end,
     io:format(user, "Claim ~p~n Drift ~p~n", [Claim, Drift]),
     epoch() - (Claim + Drift) < 0;
-
 do_verify_claim({<<"nbf">>, true}, Claim) ->
     Claim - epoch() >= 0;
-
 do_verify_claim({<<"iat">>, true}, Claim) ->
     Claim;
-
 do_verify_claim({<<"jti">>, ClaimSet}, Claim) ->
     ClaimSet == Claim.
 
 %%====================================================================
-%% Helpers
+%% @doc Helpers
+%% @end
 %%====================================================================
 get_hash_algorithm(Bin) ->
     {_Title,_AlgorithmBin,HashAlgorithm,_SignatureType} = lists:keyfind(Bin, 2, ?ALGO),
@@ -311,8 +347,8 @@ get_signature_type(Bin) ->
     get_signature_type(lists:keyfind(Bin, 2, ?ALGO), Bin).
 get_signature_type({_Title, AlgorithmBin, _HashAlgorithm, SignatureType}, _Bin) ->
     {SignatureType, AlgorithmBin};
-get_signature_type(false, Bin) ->
-    erlang:error({badarg, Bin}).
+get_signature_type(false, _Bin) ->
+    throw({error, unsupported_algorithm}).
 
 epoch() ->
     os:system_time(seconds).

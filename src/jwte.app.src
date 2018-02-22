@@ -1,24 +1,38 @@
 {application, jwte,
- [{description, "Light and compact yet full featured JSON Web TOken (JWT) library for Erlang"},
+ [
+  {description, "Light and compact yet full featured JSON Web TOken (JWT) library for Erlang"},
   {vsn, "0.5.0"},
   {registered, []},
-  {applications, [kernel, stdlib]},
-  {env, [{claims_opt, [{<<"allowed_drift">>, 1000}]},
-         {claims, %% To enable checking for a claim, uncomment the line.
-          [{<<"iss">>, <<"MyAPP">>},
-           {<<"sub">>, <<"AppAuth">>},
-           {<<"aud">>, <<"InternalDivision">>},
-           {<<"exp">>, true},
-           {<<"nbf">>, true},
-           {<<"iat">>, true},
-           {<<"jti">>, true}
-          ]},
-         {ec_keys, [
-            %{pub, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_prikey.pem"])},
-            %{pri, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_pubkey.pem"])}
-         ]}
+  {applications, [
+    kernel,
+    stdlib
+  ]},
+  {env, [
+    {claims_opt, [
+      {<<"allowed_drift">>, 1000}
     ]},
-  {maintainers, ["Thomas Bhatia"]},
-  {licenses, ["BSD"]},
-  {links, [{"Github", "https://github.com/thomasbhatia/jwte"}]}
+    %% To disable checking for a claim, set value to false.
+    {claims, [
+       {<<"iss">>, <<"MyAPP">>},
+       {<<"sub">>, <<"AppAuth">>},
+       {<<"aud">>, <<"InternalDivision">>},
+       {<<"exp">>, true},
+       {<<"nbf">>, true},
+       {<<"iat">>, true},
+       {<<"jti">>, true}
+    ]},
+     {ec_keys, [
+        %{pub, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_prikey.pem"])},
+        %{pri, filename:join([code:lib_dir(jwte), test, "ec_sect571r1_pubkey.pem"])}
+     ]}
+  ]},
+  {maintainers, [
+    "Thomas Bhatia"
+  ]},
+  {licenses, [
+    "BSD"
+  ]},
+  {links, [
+    {"Github", "https://github.com/thomasbhatia/jwte"}
+  ]}
  ]}.
