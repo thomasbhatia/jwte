@@ -155,8 +155,13 @@ verify(#{claims_verified := false}) ->
 -spec unpacker(jwt()) -> map() | {error, term()}.
 unpacker(JWT) ->
     [RawHeader, RawPayload, RawSignature] = binary:split(JWT, <<".">>, [global]),
-    Result = #{header => [], payload => [], signature => []},
-    do_unpacking(Result#{raw_header => RawHeader, raw_payload => RawPayload, raw_signature => RawSignature}).
+    Data = #{header => [],
+            payload => [],
+            signature => [],
+            raw_header => RawHeader,
+            raw_payload => RawPayload,
+            raw_signature => RawSignature},
+    do_unpacking(Data).
 
 do_unpacking(#{raw_header := RawHeader,
            header := []} = Data) ->
@@ -181,7 +186,7 @@ do_unpacking(_) ->
 decode_header(RawHeader) when is_binary(RawHeader) ->
     decode_header(#{b64 => decode_base64(RawHeader)});
 decode_header(#{b64 := {ok, B64Bin}}) ->
-    decode_header(#{json => decode_JSON(B64Bin)});
+    decode_header(#{json => decode_json(B64Bin)});
 decode_header(#{json := {ok, DecodedHeaderMap}}) ->
     {ok, DecodedHeaderMap};
 decode_header(#{b64 := {error, Error}}) ->
@@ -192,7 +197,7 @@ decode_header(#{json := {error, Error}}) ->
 decode_payload(RawPayload) when is_binary(RawPayload) ->
     decode_payload(#{b64 => decode_base64(RawPayload)});
 decode_payload(#{b64 := {ok, B64Bin}}) ->
-    decode_payload(#{json => decode_JSON(B64Bin, [])});
+    decode_payload(#{json => decode_json(B64Bin, [])});
 decode_payload(#{json := {ok, DecodedPayloadMap}}) ->
     {ok, DecodedPayloadMap};
 decode_payload(#{b64 := {error, Error}}) ->
@@ -226,9 +231,9 @@ signer({rsa, Algorithm}, PrivateKeyPem, UnsignedToken) when is_binary(PrivateKey
     signer({rsa, Algorithm}, [E, N, D], UnsignedToken);
 signer({rsa, Algorithm}, [E, N, D], UnsignedToken) ->
     Digest = get_hash_algorithm(Algorithm),
-    crypto:sign(rsa, Digest, UnsignedToken, [E,N,D]);
+    crypto:sign(rsa, Digest, UnsignedToken, [E, N, D]);
 signer({ec, _Algorithm}, ECPrivateKeyPem, UnsignedToken) when is_binary(ECPrivateKeyPem) ->
-    [{'EcpkParameters', _, not_encrypted} = _Entry1,
+    [{'EcpkParameters', _, not_encrypted},
       {'ECPrivateKey', _, not_encrypted} = Entry2] = public_key:pem_decode(ECPrivateKeyPem),
     ECPrivateKey = public_key:pem_entry_decode(Entry2),
     public_key:sign(UnsignedToken, sha512, ECPrivateKey);
@@ -252,7 +257,7 @@ verify_key(#{sig := {rsa, _Algorithm},
     Key = public_key:pem_entry_decode(RSAEntry),
     E = Key#'RSAPublicKey'.publicExponent,
     N = Key#'RSAPublicKey'.modulus,
-    NP = P#{key := [E,N]},
+    NP = P#{key := [E, N]},
     verify_key(NP);
 %%% @doc Key is decoded PEM.
 verify_key(#{sig := {rsa, Algorithm},
@@ -340,7 +345,7 @@ do_verify_claim({<<"jti">>, ClaimSet}, Claim) ->
 %% @end
 %%====================================================================
 get_hash_algorithm(Bin) ->
-    {_Title,_AlgorithmBin,HashAlgorithm,_SignatureType} = lists:keyfind(Bin, 2, ?ALGO),
+    {_Title, _AlgorithmBin, HashAlgorithm, _SignatureType} = lists:keyfind(Bin, 2, ?ALGO),
     HashAlgorithm.
 
 get_signature_type(Bin) ->
@@ -362,10 +367,10 @@ decode_base64(B64Bin) ->
             throw({error, decoding_B64})
     end.
 
-decode_JSON(JSONBin) ->
-    decode_JSON(JSONBin, [return_maps]).
+decode_json(JSONBin) ->
+    decode_json(JSONBin, [return_maps]).
 
-decode_JSON(JSONBin, Opts) ->
+decode_json(JSONBin, Opts) ->
     try jsx:decode(JSONBin, Opts) of
         DecodedJSON ->
             {ok, DecodedJSON}
