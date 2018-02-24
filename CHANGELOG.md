@@ -1,4 +1,3 @@
-## v0.10.0
+## v0.5.0 
 
-* Enhancements
-    * Foo
+** Github release

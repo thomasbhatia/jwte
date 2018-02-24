@@ -1,6 +1,12 @@
-# JWTe
+JWTe [![TravisCI build](https://travis-ci.org/thomasbhatia/jwte.svg?branch=master)](https://travis-ci.org/thomasbhatia/jwte) [![License](https://img.shields.io/badge/License-BSD-blue.svg)](LICENSE)
+=====
 
-[![Travis](https://travis-ci.org/thomasbhatia/jwte.svg?branch=master?style=flat-square)](https://travis-ci.org/thomasbhatia/jwte)
+By Thomas Bhatia (thomas.bhatia@eo.io)
+
+
+Description
+-----------
+
 
 A light and compact yet ***fully [IETF RFC 7518][1] compliant*** JSON Web Token (JWT) library for Erlang. 
 
@@ -22,7 +28,7 @@ Supports the following algorithms:
 - [x] ES512 - secp512r1
 
 
-##Installation
+## Installation
 
 Add JWTe to your ```rebar.config``` dependencies:
 
@@ -30,21 +36,21 @@ Add JWTe to your ```rebar.config``` dependencies:
         {jwte,{git , "git@github.com:thomasbhatia/jwte.git", {tag, "v0.5.0"}}}
     ]}.
 
-##Usage
-####Encode
+## Usage
+#### Encode
     jwte:encode(#{foo => bar}, Key).
 
-####Decode
+#### Decode
 Decode payload with verification
 
     jwte:decode(<<"XXXX">>, Key).
 
-####Peek
+#### Peek
 Decode without verifying the payload
 
     jwte:peek(<<"XXXX">>).
 
-##License
+## License
 
 JWTe is released under [BSD][2] (see [`LICENSE`](LICESNE)).
 
